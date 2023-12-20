@@ -8,7 +8,7 @@
     "start:local": "env-cmd node dist/index.js",
     "build": "tsc"
   },
-  "author": "Faraz Patankar",
+  "author": "Faraz Patankar and Matthijs Kralt",
   "license": "MIT",
   "devDependencies": {
     "@types/cron": "^2.0.0",
