@@ -8,7 +8,7 @@ import os from 'os'
 import { env } from './env'
 
 const uploadToS3 = async ({ name, path }: { name: string; path: string }) => {
-  console.log('Uploading backup to S3...')
+  console.log(`Uploading backup ${path} to S3...`)
 
   const bucket = env.AWS_S3_BUCKET
 
@@ -31,14 +31,14 @@ const uploadToS3 = async ({ name, path }: { name: string; path: string }) => {
     })
   )
 
-  console.log('Backup uploaded to S3...')
+  console.log(`Backup ${name} uploaded to S3...`)
 }
 
-const dumpToFile = async (path: string) => {
-  console.log('Dumping DB to file...')
+const dumpToFile = async (path: string, dbUrl: string, project: string) => {
+  console.log(`Dumping DB ${project} to file...`)
 
   await new Promise((resolve, reject) => {
-    exec(`pg_dump --dbname=${env.BACKUP_DATABASE_URL} --format=tar | gzip > ${path}`, (error, stdout, stderr) => {
+    exec(`pg_dump --dbname=${dbUrl} --format=tar | gzip > ${path}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() })
         return
@@ -53,21 +53,21 @@ const dumpToFile = async (path: string) => {
 
       // If stderr emitted anything log to console
       if (stderr != '') {
-        console.log('pg_dump succeeded with stderr warnings:')
+        console.log(`pg_dump ${project} succeeded with stderr warnings:`)
         console.log(stderr.trimEnd())
       }
 
-      console.log('Backup size:', filesize(statSync(path).size))
+      console.log(`Backup size ${project}: ${filesize(statSync(path).size)}`)
 
       resolve(undefined)
     })
   })
 
-  console.log('DB dumped to file...')
+  console.log(`DB ${project} dumped to file...`)
 }
 
 const deleteFile = async (path: string) => {
-  console.log('Deleting file...')
+  console.log(`Deleting file ${path}...`)
   await new Promise((resolve, reject) => {
     unlink(path, (err) => {
       reject({ error: err })
@@ -78,16 +78,33 @@ const deleteFile = async (path: string) => {
 }
 
 export const backup = async () => {
-  console.log('Initiating DB backup...')
+  console.log('Initiating DB backup(s)...')
 
   let date = new Date().toISOString()
   const timestamp = date.replace(/[:.]+/g, '-')
-  const filename = `backup-${timestamp}.tar.gz`
-  const filepath = path.join(os.tmpdir(), filename)
 
-  await dumpToFile(filepath)
-  await uploadToS3({ name: filename, path: filepath })
-  await deleteFile(filepath)
+  const dbUrls = env.BACKUP_DATABASE_URLS.split('|')
+  const projects = env.PROJECT_NAMES.split('|')
+
+  const promises: Promise<void>[] = projects.map((project: string, index: number) => {
+    const filename = `backup-${project}-${timestamp}.tar.gz`
+    const filepath = path.join(os.tmpdir(), filename)
+
+    if (!dbUrls[index]) {
+      console.log('No database URL found for project: ' + project)
+      return Promise.resolve()
+    }
+
+    return dumpToFile(filepath, dbUrls[index], project)
+      .then(() => {
+        return uploadToS3({ name: filename, path: filepath })
+      })
+      .then(() => {
+        return deleteFile(filepath)
+      })
+  })
+
+  await Promise.all(promises)
 
   console.log('DB backup complete...')
 }
